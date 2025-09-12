@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+  <title>Tres en raya cuántico — Canvas</title>
+  <style>
+    :root{
+      --bg:#0b0d12; --bg2:#0e1118; --panel:#12151c; --fg:#e8ecf1; --muted:#9aa4b2;
+      --accent:#5fb3ff; --x:#ff6b6b; --o:#54d39a;
+      --cell-bg:#121722; --cell-bg2:#0f1420; --grid:#1c2436; --btn:#1a2030; --btn-b:#2a3244;
+    }
+    body.light{
+      --bg:#f6f8fb; --bg2:#eef2f9; --panel:#ffffff; --fg:#0b0d12; --muted:#5f6b7a;
+      --accent:#2563eb; --x:#e11d48; --o:#16a34a; --cell-bg:#ffffff; --cell-bg2:#eef2f9; --grid:#d6deea;
+      --btn:#f8fafc; --btn-b:#cfd8e3;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:linear-gradient(180deg,var(--bg),var(--bg2));color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Noto Sans",sans-serif}
+    .wrap{max-width:980px;margin:0 auto;padding:16px;display:grid;gap:12px}
+    header{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid #1e2430;border-radius:14px;padding:10px 12px}
+    h1{font-size:18px;margin:0}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .pill{border-radius:999px;padding:6px 10px;border:1px solid #2a3244;background:#141826;color:var(--muted)}
+    button{appearance:none;border:none;border-radius:12px;padding:10px 14px;color:var(--fg);background:var(--btn);border:1px solid var(--btn-b);font-weight:600}
+    button:active{transform:translateY(1px)}
+    .boardWrap{background:var(--panel);border:1px solid #1e2430;border-radius:16px;padding:10px;display:grid;place-items:center}
+    canvas{width:min(95vw,720px);height:min(95vw,720px);touch-action:none;border-radius:12px}
+    .help{background:var(--panel);border:1px solid #1e2430;border-radius:14px;padding:12px;color:var(--muted)}
+    dialog.modal{border:none;border-radius:16px;background:linear-gradient(180deg,var(--panel),var(--bg2));color:var(--fg);width:min(640px,94vw)}
+    dialog.modal::backdrop{background:rgba(4,6,10,.65)}
+    .modal header{padding:10px 14px;border-bottom:1px solid #1e2430}
+    .modal .content{padding:14px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Tres en raya cuántico</h1>
+      <div class="row">
+        <span class="pill">Turno <b id="turnNum">1</b> — <b id="currPlayer">X</b></span>
+        <span class="pill" id="hint">Elige dos casillas</span>
+      </div>
+      <div class="row">
+        <button id="undoBtn" title="Deshacer / cancelar selección">Deshacer</button>
+        <button id="themeBtn">Modo claro</button>
+        <button id="resetBtn">Reiniciar</button>
+      </div>
+    </header>
+
+    <div class="boardWrap">
+      <canvas id="game" width="720" height="720"></canvas>
+    </div>
+
+    <details class="help">
+      <summary>Cómo se juega (resumen)</summary>
+      <p>
+        En tu turno, toca <b>dos casillas</b> para poner marcas cuánticas. Si tocas <b>dos veces la misma</b>
+        sin fantasmas previos, colocas directamente una <b>ficha clásica</b> (X u O) con el número de pieza del turno.
+      </p>
+      <p>
+        Si cierras un <b>ciclo</b>, las casillas del ciclo <b>brillan</b>. Toca cualquiera para iniciar el colapso:
+        primero se desvanece el brillo, la <b>última pieza</b> colapsa en una de sus dos casillas y aparece.
+        Desde esa casilla, un <b>rayo blanco</b> avanza lentamente hacia las casillas afectadas y va provocando
+        los colapsos forzados <b>uno a uno</b> siguiendo la cadena.
+      </p>
+      <p>
+        <b>Condiciones de victoria:</b> gana quien consiga <b>tres fichas colapsadas en línea</b>. Si tras un colapso ambos
+        logran tres en raya, gana quien tenga la <b>suma más pequeña</b> de los números de pieza de su línea. Si también empatan en la suma,
+        gana <b>quien provocó el colapso</b>.
+      </p>
+    </details>
+  </div>
+
+  <dialog id="winnerDlg" class="modal">
+    <header><h3 id="winTitle" style="margin:0">Fin de la partida</h3></header>
+    <div class="content">
+      <p id="winMsg"></p>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button id="closeWin">Cerrar</button>
+        <button id="playAgain">Jugar de nuevo</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script>
+  // ==== Geometry & drawing helpers ============================================================
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  let DPR = Math.max(1, window.devicePixelRatio || 1);
+
+  function resizeCanvas(){
+    const cssW = Math.min(720, Math.min(window.innerWidth*0.95, 720));
+    const cssH = cssW;
+    canvas.style.width = cssW+'px';
+    canvas.style.height = cssH+'px';
+    canvas.width = Math.round(cssW*DPR);
+    canvas.height = Math.round(cssH*DPR);
+    layout.w = canvas.width; layout.h = canvas.height;
+    computeCellRects();
+  }
+
+  const layout = { w: canvas.width, h: canvas.height, pad: 32, gap: 10, grid: [] };
+  function roundRect(x,y,w,h,r){
+    const rr = Math.min(r, Math.min(w,h)/2);
+    ctx.beginPath();
+    ctx.moveTo(x+rr,y); ctx.arcTo(x+w,y,x+w,y+h,rr); ctx.arcTo(x+w,y+h,x,y+h,rr); ctx.arcTo(x,y+h,x,y,rr); ctx.arcTo(x,y,x+w,y,rr);
+    ctx.closePath();
+  }
+  function computeCellRects(){
+    layout.grid.length = 0;
+    const W = layout.w, H = layout.h; const pad = layout.pad*DPR; const gap = layout.gap*DPR;
+    const size = Math.min(W,H) - pad*2; const cell = (size - gap*2)/3;
+    const left = (W-size)/2, top = (H-size)/2;
+    for(let r=0;r<3;r++){
+      for(let c=0;c<3;c++){
+        const x = left + c*(cell+gap), y = top + r*(cell+gap);
+        layout.grid.push({x,y,w:cell,h:cell,cx:x+cell/2, cy:y+cell/2});
+      }
+    }
+  }
+  computeCellRects();
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  // ==== Game state =============================================================================
+  const WIN_LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  const initialState = () => ({
+    turn: 1,
+    current: 'X',
+    firstPick: null,
+    cells: Array.from({length:9}, ()=>({quantum:[], classical:null, popT:0})),
+    moves: [], // {id, player, a, b, status:'quantum'|'classical', chosen?}
+    stack: [],
+    awaitingRandomCollapse: false,
+    cycleGlow: [],
+    pendingEdges: null,
+    pendingMoves: null,
+    pendingNewId: null,
+    lock:false,
+    glowFadeUntil: 0,
+    effects: { rays: [] },
+  });
+  let S = initialState();
+
+  const turnEl = document.getElementById('turnNum');
+  const currEl = document.getElementById('currPlayer');
+  const hintEl = document.getElementById('hint');
+
+  function sup(n){return String(n).split('').map(d=>'⁰¹²³⁴⁵⁶⁷⁸⁹'[+d]).join('');}
+  function pushHistory(){ S.stack.push(JSON.parse(JSON.stringify({turn:S.turn,current:S.current,firstPick:S.firstPick,cells:S.cells,moves:S.moves}))); }
+  function popHistory(){ const p=S.stack.pop(); if(!p) return; S.turn=p.turn; S.current=p.current; S.firstPick=p.firstPick; S.cells=p.cells; S.moves=p.moves; }
+  function playerColor(p){return p==='X'?getCss('--x') : getCss('--o');}
+  function getCss(v){return getComputedStyle(document.body).getPropertyValue(v).trim()||'#fff'}
+
+  // ==== Graph helpers (cycles & paths) =========================================================
+  function buildAdj(){
+    const adj = Array.from({length:9},()=>[]);
+    for(const m of S.moves){ if(m.status!=='quantum') continue; adj[m.a].push({to:m.b,id:m.id}); adj[m.b].push({to:m.a,id:m.id}); }
+    return adj;
+  }
+  function findPath(a,b){
+    const adj = buildAdj();
+    const q=[a], par=Array(9).fill(-1), parMove=Array(9).fill(null), seen=Array(9).fill(false); seen[a]=true;
+    while(q.length){ const u=q.shift(); for(const e of adj[u]){ const v=e.to; if(seen[v]) continue; seen[v]=true; par[v]=u; parMove[v]=e.id; q.push(v); if(v===b){ const pathCells=[b], pathMoves=[]; let cur=b; while(cur!==a){ pathMoves.push(parMove[cur]); cur=par[cur]; pathCells.push(cur);} pathCells.reverse(); pathMoves.reverse(); return {pathCells,pathMoves}; } } }
+    return null;
+  }
+
+  // ==== Input ==================================================================================
+  function cellAt(x,y){
+    for(let i=0;i<9;i++){ const r=layout.grid[i]; if(x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h) return i; }
+    return -1;
+  }
+  let pointerDown=false;
+  canvas.addEventListener('pointerdown', e=>{ pointerDown=true; handlePointer(e); });
+  canvas.addEventListener('pointerup',   e=>{ pointerDown=false; });
+  canvas.addEventListener('pointercancel', e=>{ pointerDown=false; });
+  canvas.addEventListener('pointermove', e=>{ if(!pointerDown) return; });
+
+  function handlePointer(e){
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX-rect.left)*DPR, y = (e.clientY-rect.top)*DPR;
+    const i = cellAt(x,y);
+    if(i<0) return;
+    onCell(i);
+  }
+
+  // ==== Core game interactions =================================================================
+  function onCell(i){
+    // Permitir tocar para iniciar el colapso aunque el tablero esté bloqueado
+    if (S.awaitingRandomCollapse) {
+      if (S.cycleGlow.includes(i)) performRandomCollapse();
+      return;
+    }
+    if (S.lock) return;
+    const cell = S.cells[i];
+    if (cell.classical) return;
+
+    if (S.firstPick == null) {
+      S.firstPick = i;
+      S.cells[i].quantum.push({ player: S.current, id: S.turn, temp: true });
+      return;
+    }
+
+    if (i === S.firstPick) {
+      const pre = S.cells[i].quantum.some(q => !q.temp);
+      if (!pre) {
+        pushHistory();
+        const id = S.turn;
+        S.cells[i].quantum = S.cells[i].quantum.filter(q => !q.temp);
+        S.moves.push({ id, player: S.current, a: i, b: i, status: 'classical', chosen: i });
+        S.cells[i].classical = { player: S.current, id };
+        S.cells[i].popT = performance.now();
+        cleanupQuantumOnClassicals();
+        checkEndOrNext();
+        return;
+      }
+      return;
+    }
+
+    // Confirmar movimiento cuántico a-b
+    pushHistory();
+    const a = S.firstPick, b = i; const id = S.turn;
+    S.cells[a].quantum = S.cells[a].quantum.filter(q => !(q.temp && q.id === id && q.player === S.current));
+    S.cells[a].quantum.push({ player: S.current, id });
+    S.cells[b].quantum.push({ player: S.current, id });
+    S.moves.push({ id, player: S.current, a, b, status: 'quantum' });
+
+    // Detectar cierre de ciclo con la nueva arista (a,b)
+    const last = S.moves.pop();
+    const path = findPath(a, b);
+    S.moves.push(last);
+    if (path) { S.lock = true; startRandomCollapse({ a, b, newId: id, path }); }
+    else { nextTurn(); }
+
+}
+
+function nextTurn(){ S.firstPick=null; S.turn+=1; S.current=(S.current==='X'?'O':'X'); }
+
+  function cleanupQuantumOnClassicals(){ /* Mantener fantasmas visibles incluso en casillas colapsadas hasta que la misma jugada colapse en otra casilla. */ }
+
+  function getWinningInfo(){
+    const info={X:{has:false,lines:[],best:null},O:{has:false,lines:[],best:null}};
+    for(const L of WIN_LINES){ const cs=L.map(i=>S.cells[i].classical);
+      if(cs.every(m=>m&&m.player==='X')){ const ids=L.map(i=>S.cells[i].classical.id); const sum=ids.reduce((a,b)=>a+b,0); info.X.has=true; info.X.lines.push({line:L,ids,sum}); }
+      if(cs.every(m=>m&&m.player==='O')){ const ids=L.map(i=>S.cells[i].classical.id); const sum=ids.reduce((a,b)=>a+b,0); info.O.has=true; info.O.lines.push({line:L,ids,sum}); }
+    }
+    if(info.X.lines.length) info.X.best=info.X.lines.reduce((a,b)=>a.sum<=b.sum?a:b);
+    if(info.O.lines.length) info.O.best=info.O.lines.reduce((a,b)=>a.sum<=b.sum?a:b);
+    return info;
+  }
+
+  function checkEndOrNext(){
+    const info=getWinningInfo();
+    if(info.X.has||info.O.has){
+      let winner=null, reason='';
+      if(info.X.has&&info.O.has){ const sx=info.X.best.sum, so=info.O.best.sum; if(sx<so){winner='X'; reason=`Ambos tienen tres en raya; gana X porque ${sx} < ${so}.`;} else if(so<sx){winner='O'; reason=`Ambos tienen tres en raya; gana O porque ${so} < ${sx}.`;} else { winner=S.current; reason=`Ambos tienen tres en raya y sumas iguales; gana quien movió: ${winner}.`; } }
+      else if(info.X.has){winner='X'; reason='Tres en raya de X.';} else if(info.O.has){winner='O'; reason='Tres en raya de O.';}
+      endGame(winner,info,reason); return;
+    }
+    if(S.cells.every(c=>c.classical)){ endGame(null,null,'Tablas: sin tres en raya.'); return; }
+    S.firstPick=null; S.turn+=1; S.current=(S.current==='X'?'O':'X');
+  }
+
+  // ==== Random collapse (animated) =============================================================
+  function startRandomCollapse({a,b,newId,path}){
+    // Build cycle edges from path + new edge (closing)
+    const cells=path.pathCells.slice(); const moves=path.pathMoves.slice(); const edges=[];
+    for(let i=0;i<moves.length;i++){ edges.push({u:cells[i],v:cells[i+1],moveId:moves[i]}); }
+    edges.push({u:cells[cells.length-1],v:cells[0],moveId:newId});
+
+    S.pendingEdges=edges; S.pendingMoves=edges.map(e=>S.moves.find(m=>m.id===e.moveId)); S.pendingNewId=newId;
+    const glow=new Set(); edges.forEach(e=>{glow.add(e.u); glow.add(e.v);}); S.cycleGlow=[...glow];
+    S.awaitingRandomCollapse=true; S.glowFadeUntil=0;
+  }
+
+  async function performRandomCollapse(forceSide=null){
+    if(!S.pendingEdges||!S.pendingMoves) return; S.awaitingRandomCollapse=false; S.glowFadeUntil=performance.now()+350;
+    // choose side
+    const side=(forceSide===0||forceSide===1)?forceSide:(Math.random()<0.5?0:1);
+    const picks={}; for(const e of S.pendingEdges){ picks[e.moveId]=(side===0)?e.u:e.v; }
+    const ordered=orderCycleMoves(S.pendingMoves,S.pendingNewId);
+
+    // 1) First classical piece (the newly added edge)
+    const first=ordered[0]; const firstCell=picks[first.id]; await waitMs(220); applyMoveToCell(first,firstCell); popCell(firstCell);
+    await waitMs(250);
+
+    // 2) Rays + classical along the cycle
+    let prev=firstCell;
+    for(let k=1;k<ordered.length;k++){
+      const mv=ordered[k]; const to=picks[mv.id]; await animateRay(prev,to,750); applyMoveToCell(mv,to); popCell(to); await waitMs(200); prev=to;
+    }
+
+    // 3) Forced propagations (BFS-like)
+    const seeds=[...new Set(ordered.map(m=>picks[m.id]))];
+    await animateForced(seeds);
+
+    // 4) Finish
+    S.pendingEdges=S.pendingMoves=S.pendingNewId=null; finalizeAfterCollapse();
+  }
+
+  function orderCycleMoves(cycleMoves,newId){ let idx=cycleMoves.findIndex(m=>m&&m.id===newId); if(idx<0) idx=0; return cycleMoves.slice(idx).concat(cycleMoves.slice(0,idx)); }
+  function applyMoveToCell(m,cellIdx){ m.status='classical'; m.chosen=cellIdx; if(!S.cells[cellIdx].classical) S.cells[cellIdx].classical={player:m.player,id:m.id}; S.cells[cellIdx].popT=performance.now();
+    for(const c of S.cells){ c.quantum=c.quantum.filter(q=>q.id!==m.id);} cleanupQuantumOnClassicals(); }
+  function popCell(i){ S.cells[i].popT=performance.now(); }
+
+  async function animateForced(seedCells){
+    const q=[...new Set(seedCells)], visited=new Set(S.moves.filter(m=>m.status==='classical').map(m=>m.id));
+    while(q.length){ const c=q.shift();
+      for(const m of S.moves){ if(m.status!=='quantum'||visited.has(m.id)) continue; if(m.a===c||m.b===c){ const other=(m.a===c)?m.b:m.a; await animateRay(c,other,700); applyMoveToCell(m,other); popCell(other); await waitMs(180); if(!q.includes(other)) q.push(other); visited.add(m.id); } }
+    }
+  }
+
+  function finalizeAfterCollapse(){
+    const info=getWinningInfo();
+    if(info.X.has||info.O.has){ let winner=null,reason=''; if(info.X.has&&info.O.has){ const sx=info.X.best.sum,so=info.O.best.sum; if(sx<so){winner='X';reason=`Ambos tienen tres en raya; gana X porque ${sx} < ${so}.`;} else if(so<sx){winner='O';reason=`Ambos tienen tres en raya; gana O porque ${so} < ${sx}.`;} else {winner=S.current;reason=`Ambos tienen tres en raya y sumas iguales; gana quien provocó el colapso: ${winner}.`;}} else if(info.X.has){winner='X';reason='Tres en raya de X.';} else if(info.O.has){winner='O';reason='Tres en raya de O.';} endGame(winner,info,reason); return; }
+    if(S.cells.every(c=>c.classical)){ endGame(null,null,'Tablas: sin tres en raya tras colapsar.'); return; }
+    S.lock=false; S.firstPick=null; S.turn+=1; S.current=(S.current==='X'?'O':'X');
+  }
+
+  // ==== Effects (rays) =========================================================================
+  function animateRay(fromIdx,toIdx,dur=700){
+    return new Promise(res=>{
+      const t0=performance.now();
+      S.effects.rays.push({from:fromIdx,to:toIdx,t0,dur,done:false,resolve:res});
+    });
+  }
+
+  function stepEffects(now){
+    const rays=S.effects.rays;
+    for(const r of rays){ if(r.done) continue; const t=(now-r.t0)/r.dur; if(t>=1){ r.done=true; r.resolve(); } }
+    // remove finished rays
+    for(let i=rays.length-1;i>=0;i--){ if(rays[i].done){ rays.splice(i,1); } }
+  }
+
+  // ==== UI controls =============================================================================
+  document.getElementById('resetBtn').addEventListener('click',()=>{ S=initialState(); });
+  document.getElementById('undoBtn').addEventListener('click',()=>{
+    if(S.awaitingRandomCollapse) return; if(S.firstPick!=null){ const i=S.firstPick; S.cells[i].quantum=S.cells[i].quantum.filter(q=>!q.temp); S.firstPick=null; } else { popHistory(); }
+  });
+  const themeBtn=document.getElementById('themeBtn');
+  function applyTheme(t){ if(t==='light'){ document.body.classList.add('light'); themeBtn.textContent='Modo oscuro'; } else { document.body.classList.remove('light'); themeBtn.textContent='Modo claro'; } }
+  function initTheme(){ const saved=localStorage.getItem('qt3_theme'); applyTheme(saved==='light'?'light':'dark'); }
+  themeBtn.addEventListener('click',()=>{ const toLight=!document.body.classList.contains('light'); applyTheme(toLight?'light':'dark'); localStorage.setItem('qt3_theme',toLight?'light':'dark'); });
+  initTheme();
+
+  // ==== Winner dialog ===========================================================================
+  const dlg=document.getElementById('winnerDlg'); const winTitle=document.getElementById('winTitle'); const winMsg=document.getElementById('winMsg');
+  document.getElementById('closeWin').addEventListener('click',()=>dlg.close());
+  document.getElementById('playAgain').addEventListener('click',()=>{ dlg.close(); S=initialState(); });
+  function endGame(winner,info,reason){ S.lock=true; if(winner){ winTitle.textContent=`¡Gana ${winner}!`; if(info&&info.X&&info.O&&info.X.has&&info.O.has){ const dx=info.X.best, doo=info.O.best; const fmt=o=>`${o.ids.join(' + ')} = ${o.sum}`; winMsg.innerHTML=`${reason}<br>• Suma X: ${fmt(dx)}<br>• Suma O: ${fmt(doo)}`; } else { winMsg.textContent=reason||`Tres en raya de ${winner}.`; } } else { winTitle.textContent='Empate'; winMsg.textContent=reason||'Sin tres en raya.'; } dlg.showModal(); }
+
+  // ==== Render loop ============================================================================
+  function draw(now){
+    // UI text
+    turnEl.textContent=S.turn; currEl.textContent=S.current; currEl.style.color=playerColor(S.current);
+    hintEl.textContent = S.awaitingRandomCollapse ? 'Ciclo: toca una casilla brillante para colapsar' : (S.firstPick==null?'Elige dos casillas':'Elige la segunda casilla');
+
+    // step effects
+    stepEffects(now);
+
+    // clear
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // bg grid area
+    ctx.save();
+    // draw cells
+    for(let i=0;i<9;i++){
+      const r=layout.grid[i];
+      // base cell
+      const g=ctx.createLinearGradient(r.x,r.y,r.x,r.y+r.h);
+      g.addColorStop(0,getCss('--cell-bg')); g.addColorStop(1,getCss('--cell-bg2'));
+      roundRect(r.x,r.y,r.w,r.h,18*DPR); ctx.fillStyle=g; ctx.fill();
+      // border
+      ctx.lineWidth=2*DPR; ctx.strokeStyle=getCss('--grid'); ctx.stroke();
+    }
+
+    // selection & glow
+    for(let i=0;i<9;i++){
+      const r=layout.grid[i];
+      // selection dashed
+      if(S.firstPick===i){ ctx.save(); ctx.setLineDash([8*DPR,6*DPR]); ctx.lineWidth=3*DPR; ctx.strokeStyle=getCss('--accent'); roundRect(r.x+3*DPR,r.y+3*DPR,r.w-6*DPR,r.h-6*DPR,16*DPR); ctx.stroke(); ctx.restore(); }
+      // glow
+      const isGlow = S.cycleGlow.includes(i);
+      if(isGlow){
+        let alpha=0.85*(0.6+0.4*Math.sin(now/500));
+        if(S.glowFadeUntil>now){ const t=1-((S.glowFadeUntil-now)/350); alpha = Math.max(0, 0.8*(1-t)); }
+        ctx.save(); ctx.lineWidth=4*DPR; ctx.shadowBlur=18*DPR; ctx.shadowColor=getCss('--accent'); ctx.strokeStyle=hexWithA(getCss('--accent'), alpha);
+        roundRect(r.x+2*DPR,r.y+2*DPR,r.w-4*DPR,r.h-4*DPR,16*DPR); ctx.stroke(); ctx.restore();
+      }
+    }
+
+    // quantum marks (as pills)
+    for(let i=0;i<9;i++){
+      const r=layout.grid[i]; const q=S.cells[i].quantum; if(!q.length) continue;
+      const pad=8*DPR, sp=6*DPR, ph=20*DPR; let x=r.x+pad, y=r.y+pad;
+      for(const m of q){ const txt=`${m.player}${sup(m.id)}`; ctx.font=`${14*DPR}px system-ui,Segoe UI,Roboto`; const tw=ctx.measureText(txt).width; const pw=tw+14*DPR;
+        roundRect(x,y,pw,ph,10*DPR); ctx.fillStyle = m.player==='X'?hexWithA(playerColor('X'),.20):hexWithA(playerColor('O'),.20); ctx.fill(); ctx.lineWidth=1*DPR; ctx.strokeStyle=hexWithA('#ffffff',0.08); ctx.stroke();
+        ctx.fillStyle=m.player==='X'?playerColor('X'):playerColor('O'); ctx.textBaseline='middle'; ctx.fillText(txt, x+7*DPR, y+ph/2+0.5*DPR);
+        x += pw + sp; if(x>r.x+r.w-pad-40*DPR){ x=r.x+pad; y+= ph + sp; }
+      }
+    }
+
+    // classical marks
+    for(let i=0;i<9;i++){
+      const r=layout.grid[i]; const k=S.cells[i].classical; if(!k) continue; const t = Math.min(1,(now-(S.cells[i].popT||0))/220);
+      const scale = 0.85 + 0.15*Math.sin(t*Math.PI); // pop-in
+      ctx.save(); ctx.translate(r.cx,r.cy); ctx.scale(scale,scale);
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.font=`${Math.floor(r.h*0.42)}px system-ui,Segoe UI,Roboto`;
+      ctx.fillStyle = k.player==='X'?playerColor('X'):playerColor('O'); ctx.fillText(k.player,0,0);
+      // superscript id
+      ctx.font=`${Math.floor(r.h*0.18)}px system-ui,Segoe UI,Roboto`; ctx.globalAlpha=0.9; ctx.fillText(sup(k.id), r.w*0.20, -r.h*0.10);
+      ctx.restore();
+    }
+
+    // rays
+    for(const ray of S.effects.rays){
+      const a=layout.grid[ray.from], b=layout.grid[ray.to];
+      const dx=b.cx-a.cx, dy=b.cy-a.cy; const dist=Math.hypot(dx,dy); const ang=Math.atan2(dy,dx);
+      const t=Math.max(0, Math.min(1, (now-ray.t0)/ray.dur));
+      ctx.save(); ctx.translate(a.cx,a.cy); ctx.rotate(ang);
+      ctx.globalCompositeOperation='lighter';
+      ctx.fillStyle=hexWithA('#ffffff',0.92);
+      const thickness=3*DPR; const len=dist*t; ctx.fillRect(0,-thickness/2,len,thickness);
+      // head
+      ctx.beginPath(); ctx.arc(len,-0, 3.2*DPR, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.restore();
+
+    requestAnimationFrame(draw);
+  }
+
+  function hexWithA(hex, a){
+    if(hex.startsWith('rgb')){ const m=hex.match(/rgba?\(([^)]+)\)/); if(m){ const parts=m[1].split(',').map(s=>+s.trim()); const [r,g,b]=parts; return `rgba(${r},${g},${b},${a})`; } }
+    const c = hex.replace('#','');
+    const bigint=parseInt(c.length===3?c.split('').map(x=>x+x).join(''):c,16);
+    const r=(bigint>>16)&255, g=(bigint>>8)&255, b=bigint&255; return `rgba(${r},${g},${b},${a})`;
+  }
+
+  function waitMs(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+  // ==== Game loop kickoff ======================================================================
+  requestAnimationFrame(draw);
+
+  // ==== Update loop for UI text happens in draw() ==============================================
+
+  </script>
+</body>
+</html>
