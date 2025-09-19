@@ -4,7 +4,7 @@ Single-file, offline-friendly implementation of **Quantum Tic-Tac-Toe** using HT
 
 ## Play online
 Access to:
-https://ManuM2B.github.io/Quantumtictactoe/
+[https://ManuM2B.github.io/Quantumtictactoe/](https://manum2b.github.io/QuanTicTacToe.github.io/)
 
 ## How to play (brief)
 - Each turn, tap **two cells** to place quantum marks.  
