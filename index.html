@@ -8,12 +8,12 @@
     :root{
       --bg:#0b0d12; --bg2:#0e1118; --panel:#12151c; --fg:#e8ecf1; --muted:#9aa4b2;
       --accent:#5fb3ff; --x:#ff6b6b; --o:#54d39a;
-      --cell-bg:#121722; --cell-bg2:#0f1420; --grid:#1c2436; --btn:#1a2030; --btn-b:#2a3244;
+      --cell-bg:#121722; --cell-bg2:#0f1420; --grid:#1c2436; --btn:#1a2030; --btn-b:#2a3244; --ray-color:#ffffff; --ray-blend:lighter;
     }
     body.light{
       --bg:#f6f8fb; --bg2:#eef2f9; --panel:#ffffff; --fg:#0b0d12; --muted:#5f6b7a;
-      --accent:#2563eb; --x:#e11d48; --o:#16a34a; --cell-bg:#ffffff; --cell-bg2:#eef2f9; --grid:#d6deea;
-      --btn:#f8fafc; --btn-b:#cfd8e3;
+      --accent:#2563eb; --x:#e11d48; --o:#16a34a; --cell-bg:#ffffff; --cell-bg2:#eef2f9; --grid:#d6deea; --ray-color:#000000;
+      --btn:#f8fafc; --btn-b:#cfd8e3; --ray-blend:source-over;
     }
     *{box-sizing:border-box}
     html,body{height:100%}
@@ -22,7 +22,7 @@
     header{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid #1e2430;border-radius:14px;padding:10px 12px}
     h1{font-size:18px;margin:0}
     .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-    .pill{border-radius:999px;padding:6px 10px;border:1px solid #2a3244;background:#141826;color:var(--muted)}
+    .pill{border-radius:999px;padding:6px 10px;border:1px solid #2a3244;color:var(--fg);background:var(--btn)}
     button{appearance:none;border:none;border-radius:12px;padding:10px 14px;color:var(--fg);background:var(--btn);border:1px solid var(--btn-b);font-weight:600}
     button:active{transform:translateY(1px)}
     .boardWrap{background:var(--panel);border:1px solid #1e2430;border-radius:16px;padding:10px;display:grid;place-items:center}
@@ -420,8 +420,8 @@ function nextTurn(){ S.firstPick=null; S.turn+=1; S.current=(S.current==='X'?'O'
       const dx=b.cx-a.cx, dy=b.cy-a.cy; const dist=Math.hypot(dx,dy); const ang=Math.atan2(dy,dx);
       const t=Math.max(0, Math.min(1, (now-ray.t0)/ray.dur));
       ctx.save(); ctx.translate(a.cx,a.cy); ctx.rotate(ang);
-      ctx.globalCompositeOperation='lighter';
-      ctx.fillStyle=hexWithA('#ffffff',0.92);
+      ctx.globalCompositeOperation = getComputedStyle(document.body).getPropertyValue('--ray-blend').trim() || 'source-over';
+      ctx.fillStyle=hexWithA(getComputedStyle(document.body).getPropertyValue('--ray-color').trim(),0.92);
       const thickness=3*DPR; const len=dist*t; ctx.fillRect(0,-thickness/2,len,thickness);
       // head
       ctx.beginPath(); ctx.arc(len,-0, 3.2*DPR, 0, Math.PI*2); ctx.fill();
