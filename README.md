@@ -1,4 +1,4 @@
-# Quantum Tic-Tac-Toe (Canvas)
+# Quantum Tic-Tac-Toe
 
 Single-file, offline-friendly implementation of **Quantum Tic-Tac-Toe** using HTML5.  
 
